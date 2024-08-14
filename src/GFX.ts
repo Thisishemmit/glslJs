@@ -1,14 +1,13 @@
+
 class GFX {
     private gl: WebGL2RenderingContext;
     private buffers: Map<string, { program: WebGLProgram, texture: WebGLTexture, fbo: WebGLFramebuffer }>;
-    private textures: Map<string, WebGLTexture>;
     private finalProgram: WebGLProgram | null;
     private startTime: number;
     public ready: Promise<void>;
     public log: HTMLParagraphElement;
-    private target: 'client' | 'server';
-    private serverUrl: string | null;
-    private stopTime: number | null;
+
+
 
     constructor(canvasId: string) {
         this.log = document.getElementById("log") as HTMLParagraphElement;
@@ -20,77 +19,48 @@ class GFX {
         this.gl = gl;
 
         this.buffers = new Map();
-        this.textures = new Map();
         this.finalProgram = null;
         this.startTime = 0;
-        this.target = 'client';
-        this.serverUrl = null;
-        this.stopTime = null;
 
         window.addEventListener("resize", () => this.resizeCanvas());
         this.resizeCanvas();
 
-        this.ready = Promise.resolve();
+        this.ready = this.initialize();
     }
 
-    public addBuffer(name: string, shaderPath: string): void {
-        this.ready = this.ready.then(() => this.loadShaderFile(shaderPath)
-            .then(fsShader => {
-                const program = this.createProgram(this.getVertexShader(), fsShader);
-                if (!program) {
-                    throw new Error(`Failed to create program for buffer ${name}`);
-                }
-                const { texture, fbo } = this.createTextureAndFBO();
-                this.buffers.set(name, { program, texture, fbo });
-            }));
-    }
-
-    public addTexture(name: string, texturePath: string): void {
-        this.ready = this.ready.then(() => {
-            return new Promise<void>((resolve, reject) => {
-                const texture = this.gl.createTexture();
-                if (!texture) {
-                    reject(new Error(`Failed to create texture for ${name}`));
-                    return;
-                }
-
-                const image = new Image();
-                image.onload = () => {
-                    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
-                    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
-                    this.gl.generateMipmap(this.gl.TEXTURE_2D);
-                    this.textures.set(name, texture);
-                    resolve();
-                };
-                image.onerror = () => {
-                    reject(new Error(`Failed to load texture from ${texturePath}`));
-                };
-                image.src = texturePath;
-            });
-        });
-    }
-
-    public setTarget(value: 'client' | 'server') {
-        this.target = value;
-    }
-
-    public setServer(url: string): void {
-        if (this.target !== 'server') {
-            throw new Error("Server URL can only be set when target is 'server'");
-        }
-        this.serverUrl = url;
-    }
-
-    public stopAfter(seconds: number): void {
-        this.stopTime = seconds;
-    }
-
-    public initialize(): void {
-        this.ready = this.ready.then(() => {
+    private async initialize(): Promise<void> {
+        try {
+            await this.initializeBuffersAndProgram();
             this.setupVertexBuffer();
-            this.startTime = 0;
             requestAnimationFrame(() => this.render());
-        });
+        } catch (error) {
+            console.error("Initialization failed:", error);
+            throw error;
+        }
+    }
+
+    private async initializeBuffersAndProgram(): Promise<void> {
+        const vsShader = this.getVertexShader();
+
+        // Initialize default buffers
+
+        const finalFsShader = await this.loadShaderFile('finalBuffer.glsl');
+        const finalProgram = this.createProgram(vsShader, finalFsShader);
+
+        if (!finalProgram) {
+            throw new Error("Failed to create final program");
+        }
+        this.finalProgram = finalProgram;
+    }
+
+    async addBuffer(name: string, shaderPath: string): Promise<void> {
+        const fsShader = await this.loadShaderFile(shaderPath);
+        const program = this.createProgram(this.getVertexShader(), fsShader);
+        if (!program) {
+            throw new Error(`Failed to create program for buffer ${name}`);
+        }
+        const { texture, fbo } = this.createTextureAndFBO();
+        this.buffers.set(name, { program, texture, fbo });
     }
 
     private async loadShaderFile(url: string): Promise<string> {
@@ -223,44 +193,63 @@ class GFX {
     }
 
     private render(): void {
-        if (this.stopTime !== null && this.startTime > this.stopTime) {
-            console.log('Rendering stopped');
+        if (!this.finalProgram) {
+            console.error("Final program not initialized");
             return;
         }
 
-        // ... (existing render logic)
 
-        if (this.target === 'server') {
-            this.sendFrameToServer();
-        }
+        // Render to buffers
+        this.buffers.forEach((buffer, name) => {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, buffer.fbo);
+            this.gl.useProgram(buffer.program);
+            this.setUniforms(buffer.program, this.startTime);
 
+            // Bind textures from previous buffers
+            let textureUnit = 0;
+            this.buffers.forEach((prevBuffer, prevName) => {
+                if (prevName !== name) {
+                    this.gl.activeTexture(this.gl.TEXTURE0 + textureUnit);
+                    this.gl.bindTexture(this.gl.TEXTURE_2D, prevBuffer.texture);
+                    this.gl.uniform1i(this.gl.getUniformLocation(buffer.program, `buffer${prevName}`), textureUnit);
+                    textureUnit++;
+                }
+            });
+
+            this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+        });
+
+        // Render final pass to screen
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+        this.gl.useProgram(this.finalProgram);
+        this.setUniforms(this.finalProgram, this.startTime);
+
+        let textureUnit = 0;
+        this.buffers.forEach((buffer, name) => {
+            this.gl.activeTexture(this.gl.TEXTURE0 + textureUnit);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, buffer.texture);
+            if (!this.finalProgram) {
+                throw new Error("Final program not initialized");
+            }
+            this.gl.uniform1i(this.gl.getUniformLocation(this.finalProgram, `buffer${name}`), textureUnit);
+            textureUnit++;
+        });
+
+        this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
         this.startTime += 1 / 60;
         this.log.textContent = `Time: ${this.startTime}`;
+        if (this.startTime > 5) {
+            return;
+        }
 
         requestAnimationFrame(() => this.render());
     }
 
-    private sendFrameToServer(): void {
-        if (!this.serverUrl) {
-            throw new Error("Server URL not set");
-        }
-
-        const frameData = (this.gl.canvas as HTMLCanvasElement).toDataURL('image/png');
-        fetch(this.serverUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ frameData, frameNumber: Math.floor(this.startTime * 60) }),
-        })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.text();
-        })
-        .then(result => console.log(result))
-        .catch(error => console.error('Error:', error));
+    private setUniforms(program: WebGLProgram, time: number): void {
+        const timeLocation = this.gl.getUniformLocation(program, "time");
+        const resolutionLocation = this.gl.getUniformLocation(program, "resolution");
+        if (timeLocation) this.gl.uniform1f(timeLocation, time);
+        if (resolutionLocation) this.gl.uniform2f(resolutionLocation, this.gl.canvas.width, this.gl.canvas.height);
     }
 }
 
