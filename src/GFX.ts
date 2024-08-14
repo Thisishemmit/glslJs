@@ -6,6 +6,7 @@ class GFX {
     private startTime: number;
     public ready: Promise<void>;
     public log: HTMLParagraphElement;
+    private common: string;
 
 
 
@@ -18,6 +19,8 @@ class GFX {
         }
         this.gl = gl;
 
+        this.common = '';
+
         this.buffers = new Map();
         this.finalProgram = null;
         this.startTime = 0;
@@ -28,6 +31,22 @@ class GFX {
         this.ready = this.initialize();
     }
 
+    public addCommon(code: string): void{
+        this.common += code + '\n';
+    }
+
+    private insertCommon(shader: string): string {
+        const versionReg = /^(#version\s+\d+\s+\w+\s*\n)/;
+        const match      = shader.match(versionReg);
+
+        if(match) {
+            const versionDirective = match[1];
+            const rest = shader.slice(match[1].length);
+            return `${versionDirective}\n${this.common}\n${rest}`;
+        } else {
+            return `${this.common}\n${shader}`;
+        }
+    }
     private async initialize(): Promise<void> {
         try {
             await this.initializeBuffersAndProgram();
@@ -68,7 +87,8 @@ class GFX {
         if (!response.ok) {
             throw new Error(`Failed to load shader file: ${url}`);
         }
-        return response.text();
+        const source = await response.text();
+        return this.insertCommon(source);
     }
 
     private getVertexShader(): string {
