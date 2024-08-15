@@ -1,4 +1,5 @@
 #version 300 es
+//bufferA
 uniform vec2 resolution;
 uniform float time;
 uniform int frame;

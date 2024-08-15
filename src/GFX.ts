@@ -69,6 +69,7 @@ class GFX {
         const vsShader = this.getVertexShader();
 
         // Initialize default buffers
+        this.addBuffer('bufferA', 'bufferA.glsl');
 
         const finalFsShader = await this.loadShaderFile('finalBuffer.glsl');
         const finalProgram = this.createProgram(vsShader, finalFsShader);

@@ -122,7 +122,6 @@ gfx.addFooter(`
                   fragColor = fragment_color;
               }
               `);
-gfx.addBuffer('bufferA', "bufferA.glsl");
 gfx.ready.then(() => {
 
     console.log("ShaderToy gfxironment is ready");
