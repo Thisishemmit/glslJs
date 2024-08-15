@@ -7,6 +7,8 @@ class GFX {
     public ready: Promise<void>;
     public log: HTMLParagraphElement;
     private common: string;
+    private footer: string;
+    private frame: number;
 
 
 
@@ -20,10 +22,12 @@ class GFX {
         this.gl = gl;
 
         this.common = '';
+        this.footer = '';
 
         this.buffers = new Map();
         this.finalProgram = null;
         this.startTime = 0;
+        this.frame = 0;
 
         window.addEventListener("resize", () => this.resizeCanvas());
         this.resizeCanvas();
@@ -31,6 +35,9 @@ class GFX {
         this.ready = this.initialize();
     }
 
+    public addFooter(code: string): void{
+        this.footer += '\n' + code;
+    }
     public addCommon(code: string): void{
         this.common += code + '\n';
     }
@@ -42,9 +49,9 @@ class GFX {
         if(match) {
             const versionDirective = match[1];
             const rest = shader.slice(match[1].length);
-            return `${versionDirective}\n${this.common}\n${rest}`;
+            return `${versionDirective}\n${this.common}\n${rest}${this.footer}`;
         } else {
-            return `${this.common}\n${shader}`;
+            return `${this.common}\n${shader}${this.footer}`;
         }
     }
     private async initialize(): Promise<void> {
@@ -223,7 +230,7 @@ class GFX {
         this.buffers.forEach((buffer, name) => {
             this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, buffer.fbo);
             this.gl.useProgram(buffer.program);
-            this.setUniforms(buffer.program, this.startTime);
+            this.setUniforms(buffer.program, this.startTime, this.frame);
 
             // Bind textures from previous buffers
             let textureUnit = 0;
@@ -242,7 +249,7 @@ class GFX {
         // Render final pass to screen
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
         this.gl.useProgram(this.finalProgram);
-        this.setUniforms(this.finalProgram, this.startTime);
+        this.setUniforms(this.finalProgram, this.startTime, this.frame);
 
         let textureUnit = 0;
         this.buffers.forEach((buffer, name) => {
@@ -257,19 +264,22 @@ class GFX {
 
         this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
         this.startTime += 1 / 60;
-        this.log.textContent = `Time: ${this.startTime}`;
-        if (this.startTime > 5) {
-            return;
-        }
+        this.frame++;
+        this.log.textContent = `Time: ${this.startTime} Frame: ${this.frame}`;
+        // if (this.startTime > 5) {
+        //     return;
+        // }
 
         requestAnimationFrame(() => this.render());
     }
 
-    private setUniforms(program: WebGLProgram, time: number): void {
+    private setUniforms(program: WebGLProgram, time: number, frame: number): void {
         const timeLocation = this.gl.getUniformLocation(program, "time");
         const resolutionLocation = this.gl.getUniformLocation(program, "resolution");
+        const frameLocation = this.gl.getUniformLocation(program, "frame");
         if (timeLocation) this.gl.uniform1f(timeLocation, time);
         if (resolutionLocation) this.gl.uniform2f(resolutionLocation, this.gl.canvas.width, this.gl.canvas.height);
+        if (frameLocation) this.gl.uniform1i(frameLocation, frame);
     }
 }
 
